@@ -119,7 +119,7 @@ std::pair<size_t, size_t> get_intervals_borders(float a, float b, float l, float
 	// Use std::pair to return the indices of the first and the last interval border.
 	
 
-	//conflict line 
+	//conflict new line 
 	for (int i = 0; i < 10; i++)
 	{
 
