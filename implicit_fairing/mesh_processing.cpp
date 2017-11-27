@@ -4,9 +4,7 @@
 //
 //   "Digital 3D Geometry Processing"
 //
-//   Gaspard Zoss, Alexandru Ichim
-//
-//   Copyright (C) 2016 by Computer Graphics and Geometry Laboratory,
+//   Copyright (C) 2017 by Computer Graphics and Geometry Laboratory,
 //         EPF Lausanne
 //
 //-----------------------------------------------------------------------------
@@ -14,6 +12,7 @@
 #include "mesh_processing.h"
 #include <cmath>
 #include <set>
+#include <map>
 
 namespace mesh_processing {
 
@@ -29,152 +28,154 @@ MeshProcessing::MeshProcessing(const string& filename) {
     load_mesh(filename);
 }
 
-void MeshProcessing::implicit_smoothing(const double timestep) {
+void MeshProcessing::harmonic_function(const std::vector<size_t> & constraint_indices, string property_name) {
 
-    const int n = mesh_.n_vertices();
+	const int n = mesh_.n_vertices();
 
-    // get vertex position
-    auto points = mesh_.vertex_property<Point>("v:point");
+	calc_weights();
+	auto cotan = mesh_.edge_property<Scalar>("e:weight");
+	auto area_inv = mesh_.vertex_property<Scalar>("v:weight"); //is necessary?
 
-    // compute cotan edge weights and vertex areas
-    calc_weights ();
-    auto cotan = mesh_.edge_property<Scalar>("e:weight");
-    auto area_inv = mesh_.vertex_property<Scalar>("v:weight");
+																														 //Ax = b;
+	Eigen::SparseMatrix<double> L(n, n); // nonzero elements of A as triplets: (row, column, value)
+	Eigen::MatrixXd rhs(Eigen::MatrixXd::Zero(n, 1));
 
-    // A*X = B
-    Eigen::SparseMatrix<double> A(n,n);
-    Eigen::MatrixXd B(n,3);
+	std::vector< Eigen::Triplet<double> > triplets_L;
 
-    // nonzero elements of A as triplets: (row, column, value)
-    std::vector< Eigen::Triplet<double> > triplets;
 
-    // setup matrix A and rhs B
-    for (int i = 0; i < n; ++i)
-    {
-        Mesh::Vertex v(i);
+	Mesh::Halfedge_around_vertex_circulator vh_c, vh_end;
+	Mesh::Vertex neighbor_v;
+	Mesh::Edge e;
+	double  sumOfEdgeAnglesAndAreas = 0.0;
+	double currentEdgeAngle = 0.0;
+	double timeStep = 1e-5;
+	timeStep = 1;
 
-        double vweight = area_inv[v];
+	//Loop through each vertex
+	for (auto v : mesh_.vertices()) {
 
-        // rhs row
-        for (int dim = 0; dim < 3; ++dim) {
-            B(i, dim) = points[v][dim] / vweight;
-        }
+		sumOfEdgeAnglesAndAreas = 1 / area_inv[v]; //Area of current vertex
 
-        // lhs row
-        double ww(0.0);
-        for (auto hv: mesh_.halfedges(v))
-        {
-            Mesh::Vertex vv = mesh_.to_vertex(hv);
-            Mesh::Edge e = mesh_.edge(hv);
+																							 //Loop through adjacent halfedges to get adjacent vertices
+		vh_c = mesh_.halfedges(v);
+		vh_end = vh_c;
 
-            double eweight = cotan[e];
-            ww += eweight;
 
-            triplets.push_back(Eigen::Triplet<double>(i, vv.idx(), -timestep*eweight));
-        }
-        triplets.push_back(Eigen::Triplet<double>(i, i, 1.0/vweight + timestep*ww));
-    }
+		do {
 
-    // build sparse matrix from triplets
-    A.setFromTriplets(triplets.begin(), triplets.end());
+			neighbor_v = mesh_.to_vertex(*vh_c);
+			e = mesh_.find_edge(v, neighbor_v);
 
-    // solve A*X = B
-    Eigen::SimplicialLDLT< Eigen::SparseMatrix<double> > solver(A);
-    Eigen::MatrixXd X = solver.solve(B);
+			currentEdgeAngle = timeStep*cotan[e];
 
-    // copy solution
-    for (int i = 0; i < n; ++i)
-    {
-        Mesh::Vertex v(i);
-        for (int dim = 0; dim < 3; ++dim)
-            points[v][dim] = X(i, dim);
-    }
+			sumOfEdgeAnglesAndAreas += currentEdgeAngle; //Contan value multiplied by timeStep, do we need timeStep
+			triplets_L.push_back(Eigen::Triplet<double>(v.idx(), neighbor_v.idx(), -timeStep*currentEdgeAngle));
 
-    // clean-up
-    mesh_.remove_vertex_property(area_inv);
-    mesh_.remove_edge_property(cotan);
+		} while (++vh_c != vh_end);
+
+		triplets_L.push_back(Eigen::Triplet<double>(v.idx(), v.idx(), sumOfEdgeAnglesAndAreas)); ///Do we need area?
+	}
+
+
+
+	rhs(constraint_indices[0]) = 0;
+	rhs(constraint_indices[1]) = 1;
+
+	for (int i = 0; i < n; ++i) {
+
+		// Set up Laplace-Beltrami matrix of the mesh
+		// For the vertices for which the constraints are added, replace the corresponding row of the system with the constraint
+	}
+
+	// build sparse matrix from triplets
+	L.setFromTriplets(triplets_L.begin(), triplets_L.end());
+	Eigen::SparseLU< Eigen::SparseMatrix<double> > solver(L);
+	if (solver.info() != Eigen::Success)
+		printf("linear solver init failed.\n");
+
+	Eigen::MatrixXd X = solver.solve(rhs);
+	if (solver.info() != Eigen::Success)
+		printf("linear solver failed.\n");
+
+	cout << "X[0] = " << X(constraint_indices[0], 0) << endl;
+	cout << "X[1] = " << X(constraint_indices[1], 0) << endl;
+
+	Mesh::Vertex_property<Scalar> v_harmonic_function = mesh_.vertex_property<Scalar>(property_name, 0.0f);
+
+	for (int i = 0; i < n; ++i)
+		v_harmonic_function[Mesh::Vertex(i)] = X(i, 0);
+
+	// clean-up
+	mesh_.remove_edge_property(cotan);
 }
 
-void MeshProcessing::minimal_surface() {
+std::pair<size_t, size_t> get_intervals_borders(float a, float b, float l, float interval_size) {
 
-    const int n = mesh_.n_vertices();
+	std::pair<size_t, size_t> intervals_borders;
 
-    // get vertex position
-    auto points = mesh_.vertex_property<Point>("v:point");
-    auto points_init = mesh_init_.vertex_property<Point>("v:point");
+	// ------------- IMPLEMENT HERE ---------
+	// Given the values of the harmonic function that correspond to the two vertices in a triangle,
+	// find the first and the last interval border that fall between the isovalues at the two vertices
+	// Use std::pair to return the indices of the first and the last interval border.
+	// ------------- IMPLEMENT HERE ---------
 
-    // compute cotan edge weights and vertex areas
-    calc_weights ();
-    auto cotan = mesh_.edge_property<Scalar>("e:weight");
-    auto area_inv = mesh_.vertex_property<Scalar>("v:weight");
+	return intervals_borders;
+}
 
-    // A*X = B
-    Eigen::SparseMatrix<double> L (n, n);
-    Eigen::MatrixXd rhs (Eigen::MatrixXd::Zero (n, 3));
+void MeshProcessing::add_isoline_segment(const std::pair<size_t, size_t> & borders01, const std::pair<size_t, size_t> & borders02,
+	const float & iso0, const float & iso1, const float & iso2, const Point & v0, const Point & v1, const Point & v2,
+	float l, float interval_size) {
 
-    // nonzero elements of A as triplets: (row, column, value)
-    std::vector< Eigen::Triplet<double> > triplets_L;
+	// ------------- IMPLEMENT HERE ---------
+	// For each two edges of a triangle check if they are intersected by the same isoline. 
+	// If this is the case, compute the intersections using linear interpolation of the isovalues.
+	// Add an isoline segment when the isoline indices for the two edges coincide 
+	// (isolines_points_.push_back(p0); isolines_points_.push_back(p1);)
+	// ------------- IMPLEMENT HERE ---------
 
-        double area_sum = 0.;
-    // setup matrix A and rhs B
-    for (int i = 0; i < n; ++i) {
-        Mesh::Vertex v(i);
-        area_sum += 1. / area_inv[v];
+}
 
-        if (mesh_.is_boundary(v) ) {
-            triplets_L.push_back (Eigen::Triplet<double> (i, i, 1.));
+void MeshProcessing::compute_isolines(const std::vector<size_t> & constraint_indices, string property_name, size_t num_intervals) {
+	Mesh::Vertex_property<Scalar> v_harmonic_function = mesh_.vertex_property<Scalar>(property_name);
 
-            // rhs row -- all equal to zero
-            for (int dim = 0; dim < 3; ++dim) {
-                rhs(i, dim) = points_init[v][dim];
-            }
-        } else {
-            // rhs row -- all equal to zero
-            for (int dim = 0; dim < 3; ++dim) {
-                rhs(i, dim) = 0;
-            }
+	float lower_bound = v_harmonic_function[Mesh::Vertex(constraint_indices[0])];
+	float upper_bound = v_harmonic_function[Mesh::Vertex(constraint_indices[1])];
+	float interval_size = (upper_bound - lower_bound) / ((float)num_intervals);
 
-            // lhs row
-            double ww(0.0);
-            for (auto hv: mesh_.halfedges(v)) {
-                Mesh::Vertex vv = mesh_.to_vertex(hv);
-                Mesh::Edge    e = mesh_.edge(hv);
+	std::vector<std::vector<int> > triangle_ids;
 
-                double eweight = cotan[e];
-                ww += eweight;
+	for (auto f : mesh_.faces()) {
+		std::vector<int> vv(3);
+		int k = 0;
+		for (auto v : mesh_.vertices(f)) {
+			vv[k] = v.idx();
+			cout << vv[k] << endl;
+			++k;
+		}
+		triangle_ids.push_back(vv);
+	}
 
-                triplets_L.push_back(Eigen::Triplet<double>(i, vv.idx(), -eweight));
-            }
-            triplets_L.push_back(Eigen::Triplet<double>(i, i, ww));
-        }
-    }
-    printf ("Sum of area: %g.\n", area_sum);
+	for (size_t i = 0; i < triangle_ids.size(); i++) {
+		std::vector<int> vv(3);
+		for (size_t k = 0; k < triangle_ids[i].size(); k++) vv[k] = triangle_ids[i][k];
 
+		Scalar iso0, iso1, iso2;
+		iso0 = v_harmonic_function[Mesh::Vertex(vv[0])];
+		iso1 = v_harmonic_function[Mesh::Vertex(vv[1])];
+		iso2 = v_harmonic_function[Mesh::Vertex(vv[2])];
 
-    L.setFromTriplets (triplets_L.begin (), triplets_L.end ());
+		Point v0 = mesh_.position(Mesh::Vertex(vv[0]));
+		Point v1 = mesh_.position(Mesh::Vertex(vv[1]));
+		Point v2 = mesh_.position(Mesh::Vertex(vv[2]));
 
-    // solve A*X = B
-    Eigen::SparseLU< Eigen::SparseMatrix<double> > solver(L);
-    if (solver.info () != Eigen::Success) {
-        printf("linear solver init failed.\n");
-    }
+		std::pair<size_t, size_t> borders01 = get_intervals_borders(iso0, iso1, lower_bound, interval_size);
+		std::pair<size_t, size_t> borders12 = get_intervals_borders(iso1, iso2, lower_bound, interval_size);
+		std::pair<size_t, size_t> borders02 = get_intervals_borders(iso0, iso2, lower_bound, interval_size);
 
-    Eigen::MatrixXd X = solver.solve(rhs);
-    if (solver.info () != Eigen::Success) {
-        printf("linear solver failed.\n");
-    }
-
-    // copy solution
-    for (int i = 0; i < n; ++i) {
-        Mesh::Vertex v(i);
-        for (int dim = 0; dim < 3; ++dim) {
-            points[v][dim] += 1. * (X(i, dim) - points[v][dim]);
-        }
-    }
-
-    // clean-up
-    mesh_.remove_vertex_property(area_inv);
-    mesh_.remove_edge_property(cotan);
+		add_isoline_segment(borders01, borders02, iso0, iso1, iso2, v0, v1, v2, lower_bound, interval_size);
+		add_isoline_segment(borders01, borders12, iso1, iso0, iso2, v1, v0, v2, lower_bound, interval_size);
+		add_isoline_segment(borders02, borders12, iso2, iso0, iso1, v2, v0, v1, lower_bound, interval_size);
+	}
 }
 
 void MeshProcessing::calc_uniform_mean_curvature() {
@@ -274,122 +275,6 @@ void MeshProcessing::calc_gauss_curvature() {
             curv = (2 * (Scalar)M_PI - angles) * 2.0f * v_weight[v];
         }
         v_gauss_curvature[v] = curv;
-    }
-}
-
-void MeshProcessing::uniform_smooth(const unsigned int iterations) {
-    Mesh::Vertex_around_vertex_circulator vv_c, vv_end;
-    Point laplacian;
-    unsigned int w;
-    Mesh::Vertex_property<Point> v_new_pos = mesh_.vertex_property<Point>("v:new_positions");
-
-    for (unsigned int iter=0; iter<iterations; ++iter) {
-        // compute new vertex positions by Laplacian smoothing
-        for (auto v: mesh_.vertices()) {
-            laplacian = Point(0.0);
-            w = 0;
-
-            if (!mesh_.is_boundary(v)) {
-                vv_c = mesh_.vertices(v);
-                vv_end = vv_c;
-
-                do {
-                    laplacian += (mesh_.position(*vv_c) - mesh_.position(v));
-                    w++;
-                } while(++vv_c != vv_end);
-
-                laplacian /= w;   // normalize by sum of weights
-                laplacian *= 0.5;  // damping
-            }
-
-            v_new_pos[v] = mesh_.position(v) + laplacian;
-        }
-
-        // update vertex positions
-        for (auto v: mesh_.vertices()) {
-            mesh_.position(v) = v_new_pos[v];
-        }
-    }
-}
-
-void MeshProcessing::smooth(const unsigned int iterations) {
-    Mesh::Halfedge h;
-    Mesh::Edge e;
-    Mesh::Halfedge_around_vertex_circulator vh_c, vh_end;
-    Mesh::Vertex neighbor_v;
-    Point laplace;
-    Scalar w, ww;
-    Mesh::Vertex_property<Point> v_new_pos =
-            mesh_.vertex_property<Point>("v:new_pos");
-    Mesh::Edge_property<Scalar> e_weight =
-            mesh_.edge_property<Scalar>("e:weight", 0.0f);
-
-    for (unsigned int iter=0; iter<iterations; ++iter) {
-        // update edge weights
-        calc_edges_weights();
-
-        // compute new vertex positions by Laplacian smoothing
-        for (auto v: mesh_.vertices()) {
-            laplace = Point(0.0);
-            ww = 0;
-
-            if (!mesh_.is_boundary(v)) {
-                vh_c = mesh_.halfedges(v);
-                vh_end = vh_c;
-
-                do {
-                    h = *vh_c;
-                    e = mesh_.edge(h);
-                    w = e_weight[e];
-                    ww += w;
-                    neighbor_v = mesh_.to_vertex(h);
-
-                    laplace += w * (mesh_.position(neighbor_v) - mesh_.position(v));
-
-                } while(++vh_c != vh_end);
-
-                laplace /= ww;   // normalize by sum of weights
-                laplace *= 0.5;  // damping
-            }
-
-            v_new_pos[v] = mesh_.position(v) + laplace;
-        }
-
-
-        // update vertex positions
-        for (auto v: mesh_.vertices()) {
-            mesh_.position(v) = v_new_pos[v];
-        }
-    }
-}
-
-void MeshProcessing::uniform_laplacian_enhance_feature(const unsigned int iterations,
-                                                       const unsigned int coefficient) {
-    Mesh::Vertex_property<Point> v_old_pos = mesh_.vertex_property<Point>("v:old_pos");
-
-    for(auto v: mesh_.vertices()) {
-        v_old_pos[v] = mesh_.position(v);
-    }
-
-    uniform_smooth(iterations);
-
-    for(auto v: mesh_.vertices()) {
-        mesh_.position(v) += (v_old_pos[v] - mesh_.position(v)) * coefficient;
-    }
-}
-
-void MeshProcessing::laplace_beltrami_enhance_feature(const unsigned int iterations,
-                                                      const unsigned int coefficient) {
-    Mesh::Vertex_property<Point> v_old_pos = mesh_.vertex_property<Point>("v:old_pos");
-
-    for(auto v: mesh_.vertices()) {
-        v_old_pos[v] = mesh_.position(v);
-    }
-
-    smooth(iterations);
-
-    for(auto v: mesh_.vertices()) {
-        mesh_.position(v) += (v_old_pos[v] - mesh_.position(v)) * coefficient;
     }
 }
 
@@ -515,6 +400,9 @@ void MeshProcessing::compute_mesh_properties() {
     Mesh::Vertex_property<Color> v_color_gaussian_curv =
             mesh_.vertex_property<Color>("v:color_gaussian_curv",
                                          Color(1.0f, 1.0f, 1.0f));
+	Mesh::Vertex_property<Color> v_color_laplacian =
+		mesh_.vertex_property<Color>("v:color_laplacian",
+			Color(1.0f, 1.0f, 1.0f));
 
     Mesh::Vertex_property<Scalar> vertex_valence =
             mesh_.vertex_property<Scalar>("v:valence", 0.0f);
@@ -528,6 +416,8 @@ void MeshProcessing::compute_mesh_properties() {
             mesh_.vertex_property<Scalar>("v:curvature", 0.0f);
     Mesh::Vertex_property<Scalar> v_gauss_curvature =
             mesh_.vertex_property<Scalar>("v:gauss_curvature", 0.0f);
+	Mesh::Vertex_property<Scalar> v_harmonic_function =
+		mesh_.vertex_property<Scalar>("v:harmonic_function_0", 0.0f);
 
     calc_weights();
     calc_uniform_mean_curvature();
@@ -537,6 +427,7 @@ void MeshProcessing::compute_mesh_properties() {
     color_coding(v_unicurvature, &mesh_, v_color_unicurvature);
     color_coding(v_curvature, &mesh_, v_color_curvature);
     color_coding(v_gauss_curvature, &mesh_, v_color_gaussian_curv);
+	color_coding(v_harmonic_function, &mesh_, v_color_laplacian);
 
     // get the mesh attributes and upload them to the GPU
     int j = 0;
@@ -548,9 +439,10 @@ void MeshProcessing::compute_mesh_properties() {
     color_unicurvature_ = Eigen::MatrixXf(3, n_vertices);
     color_curvature_ = Eigen::MatrixXf(3, n_vertices);
     color_gaussian_curv_ = Eigen::MatrixXf(3, n_vertices);
+	color_laplacian_ = Eigen::MatrixXf(3, n_vertices);
     normals_ = Eigen::MatrixXf(3, n_vertices);
     points_ = Eigen::MatrixXf(3, n_vertices);
-	selection_ = Eigen::MatrixXf(3, 1);
+	selection_ = Eigen::MatrixXf(3, 4);
     indices_ = MatrixXu(3, mesh_.n_faces());
 
     for(auto f: mesh_.faces()) {
@@ -569,10 +461,6 @@ void MeshProcessing::compute_mesh_properties() {
         points_.col(j) << mesh_.position(v).x,
                           mesh_.position(v).y,
                           mesh_.position(v).z;
-
-		/*selection_.col(j) << mesh_.position(v).x,
-							 mesh_.position(v).y,
-							 mesh_.position(v).z;*/
 
         normals_.col(j) << vertex_normal[v].x,
                            vertex_normal[v].y,
@@ -593,6 +481,10 @@ void MeshProcessing::compute_mesh_properties() {
         color_gaussian_curv_.col(j) << v_color_gaussian_curv[v].x,
                                        v_color_gaussian_curv[v].y,
                                        v_color_gaussian_curv[v].z;
+
+		color_laplacian_.col(j) << v_color_laplacian[v].x,
+								   v_color_laplacian[v].y,
+								   v_color_laplacian[v].z;
         ++j;
     }
 }
@@ -655,16 +547,19 @@ Color MeshProcessing::value_to_color(Scalar value, Scalar min_value, Scalar max_
     return col;
 }
 
-Eigen::Vector3f MeshProcessing::get_closest_vertex(const Eigen::Vector3f & origin, const Eigen::Vector3f & direction) {
+Eigen::Vector3f MeshProcessing::get_closest_vertex(const Eigen::Vector3f & origin, const Eigen::Vector3f & direction, size_t & closest_index) {
 	float min_distance = std::numeric_limits<float>::max();
 	Eigen::Vector3f closest_vertex;
-	for (auto v : mesh_.vertices()) {
+
+	for (int i = 0; i <  mesh_.n_vertices(); ++i) {
+		Mesh::Vertex v(i);
 		Eigen::Vector3f point;
 		point << mesh_.position(v).x, mesh_.position(v).y, mesh_.position(v).z;
 		float projection_length = (point - origin).dot(direction);
 		Eigen::Vector3f difference = point - (origin + projection_length * direction);
 		float distance = difference.norm();
 		if (distance < min_distance) {
+			closest_index = i;
 			min_distance = distance;
 			closest_vertex = point;
 		}

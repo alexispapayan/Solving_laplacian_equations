@@ -57,6 +57,7 @@ public:
 	void select_point(const Eigen::Vector2i & pixel);
     void refresh_mesh();
 	void refresh_selection();
+	void refresh_isolines();
     void refresh_trackball_center();
     Viewer();
     ~Viewer();
@@ -96,22 +97,26 @@ private:
     nanogui::GLShader shader_;
     nanogui::GLShader shaderNormals_;
 	nanogui::GLShader shaderSelection_;
+	nanogui::GLShader shaderIsolines_;
     nanogui::Window *window_;
 
     mesh_processing::MeshProcessing* mesh_;
 
-    enum COLOR_MODE : int { NORMAL = 0, VALENCE = 1, CURVATURE = 2 };
+    enum COLOR_MODE : int { NORMAL = 0, VALENCE = 1, CURVATURE = 2, LAPLACIAN = 5 };
     enum CURVATURE_TYPE : int { UNIMEAN = 2, LAPLACEBELTRAMI = 3, GAUSS = 4 };
 
     // Boolean for the viewer
     bool wireframe_ = false;
     bool normals_ = false;
-	bool selection_ = false;
-
+	bool isolines_ = false;
+	size_t edit_constraint_index_ = 0;
+	std::vector<size_t> contraint_indices_ = { 40, 58, 297, 484 };//{ 3, 1 };//{ 5, 7 }; // { 40, 58 };//{ 5, 7 };
+	
     CURVATURE_TYPE curvature_type = UNIMEAN;
     COLOR_MODE color_mode = NORMAL;
 
     PopupButton *popupCurvature;
     FloatBox<float>* coefTextBox;
-    IntBox<int>* iterationTextBox;
+    IntBox<int>* intervalsTextBox;
+	IntBox<int>* iterationTextBox;
 };

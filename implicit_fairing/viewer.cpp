@@ -22,8 +22,9 @@ void Viewer::select_point(const Eigen::Vector2i & pixel) {
 	Eigen::Vector3f endpoint = nanogui::unproject(Eigen::Vector3f(pixel[0], pixel[1], 1), view * model, projection, mSize);
 	Eigen::Vector3f direction = (endpoint - origin) / (endpoint - origin).norm();
 
-	Eigen::Vector3f closest_vertex = mesh_->get_closest_vertex(origin, direction);
-	mesh_->set_selection(closest_vertex);
+	Eigen::Vector3f closest_vertex = mesh_->get_closest_vertex(origin, direction, contraint_indices_[edit_constraint_index_]);
+	mesh_->set_selection(closest_vertex, edit_constraint_index_);
+	cout << contraint_indices_[0] << " " << contraint_indices_[1] << " " << contraint_indices_[2] << " " << contraint_indices_[3] << endl;
 }
 
 bool Viewer::keyboardEvent(int key, int scancode, int action, int modifiers) {
@@ -75,7 +76,7 @@ void Viewer::drawContents() {
 		glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 	}
 
-	Vector3f colors(1.0, 1.5, 1.0);
+	Vector3f colors(1.0, 1.0, 1.0);
 	shader_.setUniform("intensity", colors);
 	if (color_mode == CURVATURE) {
 		shader_.setUniform("color_mode", int(curvature_type));
@@ -88,7 +89,7 @@ void Viewer::drawContents() {
 	if (wireframe_) {
 		glDisable(GL_POLYGON_OFFSET_FILL);
 		glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-		colors << 0.5, 0.7, 0.5;
+		colors << 0.6, 0.6, 0.6;
 		shader_.setUniform("intensity", colors);
 		shader_.drawIndexed(GL_TRIANGLES, 0, mesh_->get_number_of_face());
 		glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
@@ -100,15 +101,24 @@ void Viewer::drawContents() {
 		shaderNormals_.setUniform("P", p);
 		shaderNormals_.drawIndexed(GL_TRIANGLES, 0, mesh_->get_number_of_face());
 	}
-	selection_ = true;
-	if (selection_) {
-		shaderSelection_.bind();
-		shaderSelection_.setUniform("MV", mv);
-		shaderSelection_.setUniform("P", p);
-		glEnable(GL_PROGRAM_POINT_SIZE);
-		shaderSelection_.drawIndexed(GL_POINTS, 0, mesh_->get_number_of_face());
-		glDisable(GL_PROGRAM_POINT_SIZE);		
+
+	if (isolines_) {
+		glEnable(GL_LINE_SMOOTH);
+		glLineWidth(2.0);
+		shaderIsolines_.bind();
+		shaderIsolines_.setUniform("MV", mv);
+		shaderIsolines_.setUniform("P", p);
+		shaderIsolines_.drawArray(GL_LINES, 0, mesh_->isolines_points_.size());
+		glDisable(GL_LINE_SMOOTH);
 	}
+
+	shaderSelection_.bind();
+	shaderSelection_.setUniform("MV", mv);
+	shaderSelection_.setUniform("P", p);
+	glEnable(GL_PROGRAM_POINT_SIZE);
+	shaderSelection_.drawIndexed(GL_POINTS, 0, mesh_->get_number_of_face());
+	glDisable(GL_PROGRAM_POINT_SIZE);		
+	
 }
 
 bool Viewer::scrollEvent(const Vector2i &p, const Vector2f &rel) {
@@ -185,6 +195,7 @@ void Viewer::initShaders() {
 		"in vec3 position;\n"
 		"in vec3 valence_color;\n"
 		"in vec3 unicruvature_color;\n"
+		"in vec3 laplacian_color;\n"
 		"in vec3 curvature_color;\n"
 		"in vec3 gaussian_curv_color;\n"
 		"in vec3 normal;\n"
@@ -205,6 +216,8 @@ void Viewer::initShaders() {
 		"        fcolor = curvature_color;\n"
 		"    } else if (color_mode == 4) {\n"
 		"        fcolor = gaussian_curv_color;\n"
+		"    } else if (color_mode == 5) {\n"
+		"        fcolor = laplacian_color;\n"
 		"    } else {\n"
 		"        fcolor = intensity;\n"
 		"    }\n"
@@ -227,17 +240,17 @@ void Viewer::initShaders() {
 
 		"void main() {\n"
 		"    vec3 c = vec3(0.0);\n"
-		"    if (color_mode == 0) {\n"
-		"        c += vec3(1.0)*vec3(0.18, 0.1, 0.1);\n"
+		"    if (color_mode >= 0) {\n"
+		"        c += vec3(1.0)*vec3(0.15, 0.15, 0.15);\n"
 		"        vec3 n = normalize(fnormal);\n"
 		"        vec3 v = normalize(view_dir);\n"
 		"        vec3 l = normalize(light_dir);\n"
 		"        float lambert = dot(n,l);\n"
 		"        if(lambert > 0.0) {\n"
-		"            c += vec3(1.0)*vec3(0.9, 0.5, 0.5)*lambert;\n"
+		"            c += vec3(1.0)*vec3(0.85, 0.85, 0.85)*lambert;\n"
 		"            vec3 v = normalize(view_dir);\n"
 		"            vec3 r = reflect(-l,n);\n"
-		"            c += vec3(1.0)*vec3(0.8, 0.8, 0.8)*pow(max(dot(r,v), 0.0), 90.0);\n"
+		"            c += vec3(1.0)*vec3(0.7, 0.7, 0.7)*pow(max(dot(r,v), 0.0), 90.0);\n"
 		"        }\n"
 		"        c *= fcolor;\n"
 		"    } else {\n"
@@ -317,8 +330,30 @@ void Viewer::initShaders() {
 	"#version 330\n"
 	"out vec4 color;\n"
 	"void main() {\n"
-	"    color = vec4(0.7, 0.0, 0.2, 1.0);\n"
+	"	 if (gl_PrimitiveID == 0) color = vec4(0.7, 0.0, 0.2, 1.0);\n"
+	"	 if (gl_PrimitiveID == 1) color = vec4(0.3, 0.2, 0.7, 1.0);\n"
+	"	 if (gl_PrimitiveID == 2) color = vec4(0.13, 0.7, 0.3, 1.0);\n"
+	"	 if (gl_PrimitiveID == 3) color = vec4(1, 0.5, 0.15, 1.0);\n"
 	"}"
+	);
+
+	shaderIsolines_.init(
+		"isolines_shader",
+		/* Vertex shader */
+
+		"#version 330\n\n"
+		"in vec3 position;\n"
+		"uniform mat4 MV;\n"
+		"uniform mat4 P;\n"
+		"void main() {\n"
+		"  gl_Position = P*MV*vec4(position, 1.0);\n"
+		"}",
+		/* Fragment shader */
+		"#version 330\n\n"
+		"out vec4 color;\n"
+		"void main() {\n"
+		"   color = vec4(1.0, 1.0, 1.0, 0.0);\n"
+		"}"
 	);
 }
 
@@ -372,112 +407,71 @@ Viewer::Viewer() : nanogui::Screen(Eigen::Vector2i(1024, 768), "DGP Viewer") {
 		this->normals_ = !this->normals_;
 	});
 
-	b = new Button(window_, "Valence");
+	b = new Button(window_, "Laplacian");
 	b->setFlags(Button::ToggleButton);
-	b->setChangeCallback([this](bool valence) {
-		if (valence) {
-			this->color_mode = VALENCE;
+	b->setChangeCallback([this](bool laplacian) {
+		if (laplacian) {
+			this->color_mode = LAPLACIAN;
 		}
 		else {
 			this->color_mode = NORMAL;
 		}
-		this->popupCurvature->setPushed(false);
 	});
 
-	popupCurvature = new PopupButton(window_, "Curvature");
-	popup = popupCurvature->popup();
-	popupCurvature->setCallback([this]() {
-		this->color_mode = CURVATURE;
-	});
-	popup->setLayout(new GroupLayout());
-	new Label(popup, "Curvature Type", "sans-bold");
-	b = new Button(popup, "Uniform Laplacian");
-	b->setFlags(Button::RadioButton);
-	b->setPushed(true);
-	b->setCallback([this]() {
-		this->curvature_type = UNIMEAN;
-	});
-	b = new Button(popup, "Laplace-Beltrami");
-	b->setFlags(Button::RadioButton);
-	b->setCallback([this]() {
-		this->curvature_type = LAPLACEBELTRAMI;
-	});
-	b = new Button(popup, "Gaussian");
-	b->setFlags(Button::RadioButton);
-	b->setCallback([this]() {
-		this->curvature_type = GAUSS;
+
+	b = new Button(window_, "Isolines");
+	b->setFlags(Button::ToggleButton);
+	b->setChangeCallback([this](bool iso_curve) {
+		this->isolines_ = !this->isolines_;
 	});
 
-	new Label(window_, "Smoothing", "sans-bold");
-	popupBtn = new PopupButton(window_, "Smooth");
+	new Label(window_, "Constraints", "sans-bold");
+	popupBtn = new PopupButton(window_, "Edit Constraint");
 	popup = popupBtn->popup();
 	popup->setLayout(new GroupLayout());
-	b = new Button(popup, "Uniform Laplacian");
+	b = new Button(popup, "Number 0");
 	b->setCallback([this]() {
-		mesh_->uniform_smooth(10);
-		mesh_->compute_mesh_properties();
-		this->refresh_mesh();
+		edit_constraint_index_ = 0;
 	});
-	b = new Button(popup, "Laplace-Beltrami");
+	b = new Button(popup, "Number 1");
 	b->setCallback([this]() {
-		mesh_->smooth(10);
-		this->refresh_mesh();
+		edit_constraint_index_ = 1;
 	});
-
-	b = new Button(popup, "Implicit Smoothing");
+	b = new Button(popup, "Number 2");
 	b->setCallback([this]() {
-		mesh_->implicit_smoothing();
-		mesh_->compute_mesh_properties();
-		this->refresh_mesh();
+		edit_constraint_index_ = 2;
+	});
+	b = new Button(popup, "Number 3");
+	b->setCallback([this]() {
+		edit_constraint_index_ = 3;
 	});
 
-	popupBtn = new PopupButton(window_, "Enhancement");
-	popup = popupBtn->popup();
-	popup->setLayout(new GroupLayout());
-
-	Widget* panel = new Widget(popup);
-	panel->setLayout(new GroupLayout());
-
-
-	b = new Button(panel, "Uniform Laplacian");
-	b->setCallback([this]() {
-		mesh_->uniform_laplacian_enhance_feature(this->iterationTextBox->value(),
-			this->coefTextBox->value());
-		mesh_->compute_mesh_properties();
-		this->refresh_mesh();
-	});
-	b = new Button(panel, "Laplace-Beltrami");
-	b->setCallback([this]() {
-		mesh_->laplace_beltrami_enhance_feature(this->iterationTextBox->value(),
-			this->coefTextBox->value());
+	b = new Button(window_, "Harmonic Functions");
+	b->setChangeCallback([this](bool normals) {
+		std::vector<size_t> constrain_indices_first = { contraint_indices_[0], contraint_indices_[1] };
+		std::vector<size_t> constrain_indices_second = { contraint_indices_[2], contraint_indices_[3] };
+		mesh_->harmonic_function(constrain_indices_first, "v:harmonic_function_0");
+		mesh_->harmonic_function(constrain_indices_second, "v:harmonic_function_1");
+		cout << "DONE" << endl;
 		mesh_->compute_mesh_properties();
 		this->refresh_mesh();
 	});
 
-	panel = new Widget(popup);
-	GridLayout *layout = new GridLayout(Orientation::Horizontal, 2,
-		Alignment::Middle, 15, 5);
-	layout->setColAlignment({ Alignment::Maximum, Alignment::Fill });
-	layout->setSpacing(0, 10);
-	panel->setLayout(layout);
-	new Label(panel, "Number of iterations:", "sans-bold");
-	iterationTextBox = new IntBox<int>(panel, 10);
-	iterationTextBox->setEditable(true);
-	iterationTextBox->setFixedSize(Vector2i(50, 20));
-	iterationTextBox->setDefaultValue("10");
-	iterationTextBox->setFontSize(16);
-	iterationTextBox->setFormat("[-]?[0-9]*\\.?[0-9]+");
-	new Label(panel, "Coefficient:", "sans-bold");
-	coefTextBox = new FloatBox<float>(panel, 2.0);
-	coefTextBox->setEditable(true);
-	coefTextBox->setFixedSize(Vector2i(50, 20));
-	coefTextBox->setDefaultValue("2.0");
-	coefTextBox->setFontSize(16);
-	coefTextBox->setFormat("[-]?[0-9]*\\.?[0-9]+");
+	new Label(window_, "Number of intervals:", "sans-bold");
+	intervalsTextBox = new IntBox<int>(window_, 10);
+	intervalsTextBox->setEditable(true);
+	intervalsTextBox->setFixedSize(Vector2i(50, 20));
+	intervalsTextBox->setDefaultValue("10");
+	intervalsTextBox->setFontSize(16);
 
-	b = new Button(window_, "Minimal Surface");
-	b->setCallback([this]() {
-		mesh_->minimal_surface();
+	b = new Button(window_, "Compute Isolines");
+	b->setChangeCallback([this](bool normals) {
+		std::vector<size_t> constrain_indices_first = { contraint_indices_[0], contraint_indices_[1] };
+		std::vector<size_t> constrain_indices_second = { contraint_indices_[2], contraint_indices_[3] };
+		mesh_->isolines_points_.clear();
+		mesh_->compute_isolines(constrain_indices_first, "v:harmonic_function_0", intervalsTextBox->value());
+		mesh_->compute_isolines(constrain_indices_second, "v:harmonic_function_1", intervalsTextBox->value());
+		cout << "DONE" << endl;
 		mesh_->compute_mesh_properties();
 		this->refresh_mesh();
 	});
@@ -485,7 +479,7 @@ Viewer::Viewer() : nanogui::Screen(Eigen::Vector2i(1024, 768), "DGP Viewer") {
 	performLayout();
 
 	initShaders();
-	mesh_ = new mesh_processing::MeshProcessing("../data/max.off");
+	mesh_ = new mesh_processing::MeshProcessing("../data/bunny_1000.obj");
 	this->refresh_mesh();
 	this->refresh_trackball_center();
 }
@@ -507,9 +501,10 @@ void Viewer::refresh_mesh() {
 	shader_.uploadAttrib("unicruvature_color", *(mesh_->get_colors_unicurvature()));
 	shader_.uploadAttrib("curvature_color", *(mesh_->get_color_curvature()));
 	shader_.uploadAttrib("gaussian_curv_color", *(mesh_->get_colors_gaussian_curv()));
+	shader_.uploadAttrib("laplacian_color", *(mesh_->get_colors_laplacian()));
 	shader_.uploadAttrib("normal", *(mesh_->get_normals()));
 	shader_.setUniform("color_mode", int(color_mode));
-	shader_.setUniform("intensity", Vector3f(0.98, 0.59, 0.04));
+	shader_.setUniform("intensity", Vector3f(1.0, 1.0, 1.0));
 
 	shaderNormals_.bind();
 	shaderNormals_.shareAttrib(shader_, "indices");
@@ -517,15 +512,29 @@ void Viewer::refresh_mesh() {
 	shaderNormals_.shareAttrib(shader_, "normal");
 
 	refresh_selection();
+
+	refresh_isolines();
 }
 
 void Viewer::refresh_selection() {
 	shaderSelection_.bind();
-	Eigen::Matrix<uint32_t, Eigen::Dynamic, Eigen::Dynamic> indices = Eigen::Matrix<uint32_t, Eigen::Dynamic, Eigen::Dynamic>(1, 1);
-	indices << 0;
+	Eigen::Matrix<uint32_t, Eigen::Dynamic, Eigen::Dynamic> indices = Eigen::Matrix<uint32_t, Eigen::Dynamic, Eigen::Dynamic>(4, 1);
+	indices << 0, 1, 2, 3;
 	Eigen::MatrixXf selection = (*(mesh_->get_selection()));
 	shaderSelection_.uploadIndices(indices);
 	shaderSelection_.uploadAttrib("position", selection);
+}
+
+void Viewer::refresh_isolines() {
+	shaderIsolines_.bind();
+	MatrixXf isolines_matrix(3, mesh_->isolines_points_.size());
+	for (size_t j = 0; j < mesh_->isolines_points_.size(); j++)
+		isolines_matrix.col(j) <<
+		mesh_->isolines_points_[j].x,
+		mesh_->isolines_points_[j].y,
+		mesh_->isolines_points_[j].z;
+
+	shaderIsolines_.uploadAttrib("position", isolines_matrix);
 }
 
 void Viewer::computeCameraMatrices(Eigen::Matrix4f &model,
