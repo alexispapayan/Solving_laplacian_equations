@@ -120,6 +120,10 @@ std::pair<size_t, size_t> get_intervals_borders(float a, float b, float l, float
 	
 
 	//conflict line 
+	for (int i = 0; i < 10; i++)
+	{
+
+	}
 
 	return intervals_borders;
 }
