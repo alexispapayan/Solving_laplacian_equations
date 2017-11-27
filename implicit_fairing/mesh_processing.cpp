@@ -151,14 +151,21 @@ std::pair<size_t, size_t> get_intervals_borders(float a, float b, float l, float
 }
 
 void MeshProcessing::add_isoline_segment(const std::pair<size_t, size_t> & borders01, const std::pair<size_t, size_t> & borders02,
-	const float & iso0, const float & iso1, const float & iso2, const Point & v0, const Point & v1, const Point & v2,
+	const float & iso0, const float & iso1, const float & iso2, 
+	const Point & v0, const Point & v1, const Point & v2,
 	float l, float interval_size) {
+
+	Point p0, p1;
+	p0 = (v0 + v1)*0.5;
+	p1 = (v1 + v2)*0.5;
+	
 
 
 	// For each two edges of a triangle check if they are intersected by the same isoline. 
 	// If this is the case, compute the intersections using linear interpolation of the isovalues.
 	// Add an isoline segment when the isoline indices for the two edges coincide 
-	// (isolines_points_.push_back(p0); isolines_points_.push_back(p1);)
+	isolines_points_.push_back(p0);
+	isolines_points_.push_back(p1);
 
 
 }
