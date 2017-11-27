@@ -117,8 +117,9 @@ std::pair<size_t, size_t> get_intervals_borders(float a, float b, float l, float
 	// Given the values of the harmonic function that correspond to the two vertices in a triangle,
 	// find the first and the last interval border that fall between the isovalues at the two vertices
 	// Use std::pair to return the indices of the first and the last interval border.
+	
 
-
+	//Adding another comment line
 	return intervals_borders;
 }
 
