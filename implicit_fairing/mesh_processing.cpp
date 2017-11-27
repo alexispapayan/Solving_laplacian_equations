@@ -111,20 +111,42 @@ void MeshProcessing::harmonic_function(const std::vector<size_t> & constraint_in
 
 std::pair<size_t, size_t> get_intervals_borders(float a, float b, float l, float interval_size) {
 
-	std::pair<size_t, size_t> intervals_borders;
+	// Given the values of the harmonic function that correspond to the two vertices in a triangle
+	//a - v_harmonic_function[Mesh::Vertex(vv[0])]
+	//b - v_harmonic_function[Mesh::Vertex(vv[1])]
+	//l - float lower_bound = v_harmonic_function[Mesh::Vertex(constraint_indices[0])];
+	//float interval_size = (upper_bound - lower_bound) / ((float)num_intervals);
 
 
-	// Given the values of the harmonic function that correspond to the two vertices in a triangle,
-	// find the first and the last interval border that fall between the isovalues at the two vertices
-	// Use std::pair to return the indices of the first and the last interval border.
+	std::pair<size_t, size_t> intervals_borders; //int id of interval borders
+
+	float t0 = 0.0;
+	size_t counter0 = 0;
+	do {
+		t0 += interval_size;
+		counter0++;
+	} while (t0 < a);
+
+	float t1 = 0.0;
+	size_t counter1 = 0;
+	do {
+		t1 += interval_size;
+		counter1++;
+	} while (t1 < b);
+
+	intervals_borders.first = t0;
+	intervals_borders.second = t1;
+
+	cout << t0 << endl;
+	cout << t1 << endl;
 	
 
-	//conflict new line 
-	for (int i = 0; i < 10; i++)
-	{
+	// find the first and the last interval border that fall between the isovalues at the two vertices
 
-	}
 
+
+
+	// Use std::pair to return the indices of the first and the last interval border.
 	return intervals_borders;
 }
 
@@ -132,12 +154,12 @@ void MeshProcessing::add_isoline_segment(const std::pair<size_t, size_t> & borde
 	const float & iso0, const float & iso1, const float & iso2, const Point & v0, const Point & v1, const Point & v2,
 	float l, float interval_size) {
 
-	// ------------- IMPLEMENT HERE ---------
+
 	// For each two edges of a triangle check if they are intersected by the same isoline. 
 	// If this is the case, compute the intersections using linear interpolation of the isovalues.
 	// Add an isoline segment when the isoline indices for the two edges coincide 
 	// (isolines_points_.push_back(p0); isolines_points_.push_back(p1);)
-	// ------------- IMPLEMENT HERE ---------
+
 
 }
 
