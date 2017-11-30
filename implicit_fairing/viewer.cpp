@@ -449,7 +449,7 @@ Viewer::Viewer() : nanogui::Screen(Eigen::Vector2i(1024, 768), "DGP Viewer") {
 	b = new Button(window_, "Harmonic Functions");
 	b->setChangeCallback([this](bool normals) {
 		std::vector<size_t> constrain_indices_first = { contraint_indices_[0], contraint_indices_[1] };
-		std::vector<size_t> constrain_indices_second = { contraint_indices_[2], contraint_indices_[3] };
+	    std::vector<size_t> constrain_indices_second = { contraint_indices_[2], contraint_indices_[3] };
 		mesh_->harmonic_function(constrain_indices_first, "v:harmonic_function_0");
 		mesh_->harmonic_function(constrain_indices_second, "v:harmonic_function_1");
 		cout << "DONE" << endl;
